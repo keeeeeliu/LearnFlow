@@ -1,6 +1,4 @@
-🧩 Project 1: AI Study Tool for Technical Interviews (Chrome Extension)
-
-📁 Folder: ai-interview-study-extension
+🧩 Project: AI Study Tool for Technical Interviews (Chrome Extension)
 
 📄 Overview
 
@@ -32,11 +30,3 @@ Chrome APIs: Content Script, Background Script, Popup UI
 Backend (optional): Express + OpenAI API proxy
 
 Tools: Vite + Manifest v3
-
-💡 Highlights
-
-Embeds an AI learning assistant directly into users’ browsing experience.
-
-Demonstrates ability to integrate OpenAI API with Chrome extensions.
-
-Strong portfolio project showcasing React modularity + API communication.
