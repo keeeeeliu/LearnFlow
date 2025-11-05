@@ -3,6 +3,7 @@
   "name": "LearnFlow",
   "version": "1.0.0",
   "description": "AI-powered study assistant for technical interviews and computer science concepts",
+  "homepage_url": "https://github.com/keeeeeliu/LearnFlow",
   "icons": {
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
