@@ -11,12 +11,22 @@ interface Explanation {
 
 const Popup: React.FC = () => {
   const [explanation, setExplanation] = useState<Explanation | null>(null);
-  const [loading, setLoading] = useState(false);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [savedTopics, setSavedTopics] = useState<string[]>([]);
+  const [isPdfPage, setIsPdfPage] = useState(false);
 
   useEffect(() => {
+    // Check if current page is a PDF
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.url) {
+        const url = tabs[0].url.toLowerCase();
+        if (url.endsWith('.pdf') || url.includes('.pdf?') || url.includes('pdf#')) {
+          setIsPdfPage(true);
+        }
+      }
+    });
+
     // Load saved topics and last explanation from storage
     chrome.storage.local.get(['savedTopics', 'lastExplanation', 'lastExplanationTime'], (result) => {
       if (result.savedTopics) {
@@ -36,7 +46,6 @@ const Popup: React.FC = () => {
     const messageListener = (message: any) => {
       if (message.type === 'EXPLANATION_GENERATED') {
         setExplanation(message.data);
-        setLoading(false);
       }
     };
 
@@ -48,16 +57,6 @@ const Popup: React.FC = () => {
     };
   }, []);
 
-  const handleGetExplanation = async () => {
-    setLoading(true);
-
-    // Get selected text from active tab
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    if (tab.id) {
-      chrome.tabs.sendMessage(tab.id, { type: 'GET_SELECTED_TEXT' });
-    }
-  };
 
   const handleSaveTopic = () => {
     if (explanation && !savedTopics.includes(explanation.term)) {
@@ -65,6 +64,12 @@ const Popup: React.FC = () => {
       setSavedTopics(updated);
       chrome.storage.local.set({ savedTopics: updated });
     }
+  };
+
+  const handleDeleteTopic = (topicToDelete: string) => {
+    const updated = savedTopics.filter(topic => topic !== topicToDelete);
+    setSavedTopics(updated);
+    chrome.storage.local.set({ savedTopics: updated });
   };
 
   const handleQuizSubmit = () => {
@@ -82,13 +87,21 @@ const Popup: React.FC = () => {
         </p>
       </div>
 
-      <button
-        onClick={handleGetExplanation}
-        disabled={loading}
-        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg mb-4 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-      >
-        {loading ? 'Loading...' : 'Explain Selected Text'}
-      </button>
+      {isPdfPage && (
+        <div className="bg-amber-50 border-l-4 border-amber-400 p-3 mb-4">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <span className="text-amber-400">⚠️</span>
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-amber-800">
+                <strong>PDF Not Supported:</strong> Chrome's built-in PDF viewer doesn't support extensions.
+                Please copy text to a regular webpage or use a web-based PDF viewer.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {explanation && (
         <div className="bg-white rounded-lg shadow-md p-4 mb-4">
@@ -104,7 +117,7 @@ const Popup: React.FC = () => {
 
           <div className="mb-4">
             <h3 className="font-semibold text-gray-700 mb-2">Definition</h3>
-            <p className="text-gray-600">{explanation.definition}</p>
+            <p className="text-black">{explanation.definition}</p>
           </div>
 
           {explanation.examples && explanation.examples.length > 0 && (
@@ -112,7 +125,7 @@ const Popup: React.FC = () => {
               <h3 className="font-semibold text-gray-700 mb-2">Examples</h3>
               <ul className="list-disc list-inside space-y-1">
                 {explanation.examples.map((example, index) => (
-                  <li key={index} className="text-gray-600 text-sm">
+                  <li key={index} className="text-black text-sm">
                     {example}
                   </li>
                 ))}
@@ -187,9 +200,16 @@ const Popup: React.FC = () => {
             {savedTopics.map((topic, index) => (
               <span
                 key={index}
-                className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded"
+                className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded flex items-center gap-1"
               >
                 {topic}
+                <button
+                  onClick={() => handleDeleteTopic(topic)}
+                  className="ml-1 text-blue-600 hover:text-blue-800 font-bold"
+                  title="Delete topic"
+                >
+                  ✕
+                </button>
               </span>
             ))}
           </div>

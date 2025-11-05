@@ -1,17 +1,10 @@
-// Background service worker for Chrome extension
-console.log('AI Study Tool background service worker loaded');
+// Background service worker for LearnFlow Chrome extension
+console.log('LearnFlow background service worker loaded');
 
-// Store API key (you should store this securely in chrome.storage)
-let apiKey = '';
+// ============================================================================
+// MESSAGE LISTENER - Entry point for all extension messages
+// ============================================================================
 
-// Load API key from storage on startup
-chrome.storage.sync.get(['openaiApiKey'], (result) => {
-  if (result.openaiApiKey) {
-    apiKey = result.openaiApiKey;
-  }
-});
-
-// Listen for messages
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'REQUEST_EXPLANATION') {
     handleExplanationRequest(message.text)
@@ -40,17 +33,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'SET_API_KEY') {
-    apiKey = message.apiKey;
     chrome.storage.sync.set({ openaiApiKey: message.apiKey });
     sendResponse({ success: true });
     return true;
   }
+
+  if (message.type === 'CHAT_MESSAGE') {
+    handleChatMessage(message.question, message.context)
+      .then((answer) => {
+        sendResponse({ success: true, answer: answer });
+      })
+      .catch((error) => {
+        console.error('Error handling chat message:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep message channel open for async response
+  }
 });
 
-// Function to generate explanation using OpenAI API
+// ============================================================================
+// EXPLANATION REQUEST HANDLER
+// ============================================================================
+
 async function handleExplanationRequest(text: string) {
+  // Load API settings from storage each time (service workers don't maintain state)
+  const result = await chrome.storage.sync.get(['openaiApiKey', 'groqApiKey', 'selectedApi']);
+
+  // ========== DETERMINE WHICH API TO USE ==========
+  const selectedApi = result.selectedApi || 'openai'; // Default to OpenAI
+  const apiKey = selectedApi === 'groq' ? result.groqApiKey : result.openaiApiKey;
+
+  // Debug logging
+  console.log('[LearnFlow] Selected API:', selectedApi);
+  console.log('[LearnFlow] API Key exists:', !!apiKey);
+
   if (!apiKey) {
-    throw new Error('OpenAI API key not set. Please configure it in the extension settings.');
+    const apiName = selectedApi === 'groq' ? 'Groq' : 'OpenAI';
+    throw new Error(`${apiName} API key not set. Please configure it in the extension settings.`);
   }
 
   const prompt = `You are a computer science tutor helping students learn technical concepts.
@@ -60,24 +79,47 @@ A student has highlighted the following term: "${text}"
 Please provide a comprehensive explanation in the following JSON format:
 {
   "term": "the term or concept",
-  "definition": "clear, concise definition (2-3 sentences)",
-  "examples": ["example 1", "example 2", "example 3"],
+  "definition": "clear, concise definition (2-3 sentences). Use markdown code formatting for any code: inline code with \`code\` and code blocks with \`\`\`language\\ncode\\n\`\`\`",
+  "examples": ["example 1 with code examples using markdown format", "example 2", "example 3"],
   "quizQuestion": "a multiple choice question to test understanding",
   "quizOptions": ["option 1", "option 2", "option 3", "option 4"],
   "quizAnswer": 0 (index of correct answer, 0-3)
 }
 
+IMPORTANT: When including code examples, use markdown code blocks like this:
+- Inline code: \`variableName\`
+- Code blocks: \`\`\`python\\ncode here\\n\`\`\`
+
 Focus on technical interview and computer science concepts. Make explanations clear and beginner-friendly.`;
 
+  // ========== CONFIGURE API ENDPOINT AND MODEL ==========
+  // This is where we switch between Groq and OpenAI
+  const apiConfig = selectedApi === 'groq'
+    ? {
+        endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+        model: 'llama-3.3-70b-versatile',  // Groq's latest free model
+        provider: 'Groq'
+      }
+    : {
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+        model: 'gpt-3.5-turbo',  // OpenAI's paid model
+        provider: 'OpenAI'
+      };
+
+  console.log(`[LearnFlow] Using ${apiConfig.provider} API`);
+  console.log('[LearnFlow] Endpoint:', apiConfig.endpoint);
+  console.log('[LearnFlow] Model:', apiConfig.model);
+
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    // ========== MAKE API CALL ==========
+    const response = await fetch(apiConfig.endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: apiConfig.model,
         messages: [
           {
             role: 'system',
@@ -105,44 +147,96 @@ Focus on technical interview and computer science concepts. Make explanations cl
     const explanation = JSON.parse(content);
     return explanation;
   } catch (error) {
-    console.error('Error calling OpenAI API:', error);
+    const apiName = selectedApi === 'groq' ? 'Groq' : 'OpenAI';
+    console.error(`[LearnFlow] Error calling ${apiName} API:`, error);
+    console.error('[LearnFlow] API Config:', apiConfig);
+    console.error('[LearnFlow] Full error details:', (error as Error).message);
 
-    // Return a fallback explanation for testing
+    // Return a fallback explanation with specific error info
     return {
       term: text,
-      definition: `This is a placeholder explanation for "${text}". To get AI-generated explanations, please set your OpenAI API key in the extension settings.`,
+      definition: `Error: API request failed. Check console for details. Selected API: ${apiName}. Error: ${(error as Error).message}`,
       examples: [
-        'Example 1: Please configure your API key',
-        'Example 2: Go to extension settings',
-        'Example 3: Enter your OpenAI API key',
+        `Error 1: ${apiName} API call failed`,
+        `Error 2: Check service worker console for details`,
+        `Error 3: Verify your ${apiName} API key is correct`,
       ],
-      quizQuestion: 'Have you configured your API key?',
-      quizOptions: ['Yes', 'No', 'Not yet', 'What API key?'],
+      quizQuestion: `Is your ${apiName} API key configured correctly?`,
+      quizOptions: ['Yes', 'No', 'Not sure', 'Need to check'],
       quizAnswer: 0,
     };
   }
 }
 
-// Optional: Add context menu item for quick explanations
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'explainTerm',
-    title: 'Explain "%s" with AI',
-    contexts: ['selection'],
-  });
-});
+// ============================================================================
+// CHAT MESSAGE HANDLER
+// ============================================================================
 
-chrome.contextMenus.onClicked.addListener((info, _tab) => {
-  if (info.menuItemId === 'explainTerm' && info.selectionText) {
-    handleExplanationRequest(info.selectionText)
-      .then((explanation) => {
-        chrome.runtime.sendMessage({
-          type: 'EXPLANATION_GENERATED',
-          data: explanation,
-        });
-      })
-      .catch((error) => {
-        console.error('Error:', error);
-      });
+async function handleChatMessage(question: string, context: string) {
+  // Load API settings from storage
+  const result = await chrome.storage.sync.get(['openaiApiKey', 'groqApiKey', 'selectedApi']);
+
+  // ========== DETERMINE WHICH API TO USE ==========
+  const selectedApi = result.selectedApi || 'openai';
+  const apiKey = selectedApi === 'groq' ? result.groqApiKey : result.openaiApiKey;
+
+  if (!apiKey) {
+    const apiName = selectedApi === 'groq' ? 'Groq' : 'OpenAI';
+    throw new Error(`${apiName} API key not set. Please configure it in the extension settings.`);
   }
-});
+
+  // ========== CONFIGURE API ENDPOINT AND MODEL ==========
+  const apiConfig = selectedApi === 'groq'
+    ? {
+        endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+        model: 'llama-3.3-70b-versatile',  // Groq's latest free model
+        provider: 'Groq'
+      }
+    : {
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+        model: 'gpt-3.5-turbo',  // OpenAI's paid model
+        provider: 'OpenAI'
+      };
+
+  try {
+    // ========== MAKE API CALL ==========
+    const response = await fetch(apiConfig.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a helpful computer science tutor. The user is learning about "${context}". Answer their follow-up questions clearly and concisely. Use markdown formatting for code: inline code with \`code\` and code blocks with \`\`\`language\\ncode\\n\`\`\`.`,
+          },
+          {
+            role: 'user',
+            content: question,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 300,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error?.message || 'API request failed');
+    }
+
+    const data = await response.json();
+    const answer = data.choices[0].message.content;
+
+    return answer;
+  } catch (error) {
+    console.error(`Error calling ${apiConfig.provider} API for chat:`, error);
+    throw error;
+  }
+}
+
+// Context menu feature removed for stability
+// You can use the popup or content script indicator instead
